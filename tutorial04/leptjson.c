@@ -92,18 +92,51 @@ static int lept_parse_number(lept_context* c, lept_value* v) {
 
 static const char* lept_parse_hex4(const char* p, unsigned* u) {
     /* \TODO */
-    return p;
+	*u = 0x0;
+	for (int i = 0; i < 4; i++) {
+		unsigned tmp;
+		*u <<= 4;
+		if (*p >= '0' && *p <= '9')
+			tmp = *p - '0';
+		else if (*p >= 'A' && *p <= 'F')  //十六进制的F
+			tmp = *p - 'A' + 10;
+		else if (*p >= 'a' && *p <= 'f')  
+			tmp = *p - 'a' + 10;
+		else 
+			return NULL;
+		*u += tmp;	//可使用*u |= tmp
+		p++;
+	}
+	return p;
 }
 
 static void lept_encode_utf8(lept_context* c, unsigned u) {
     /* \TODO */
+	assert(u>=0x0000 && u <= 0x10FFFF);
+	if (u >= 0x0000 && u <= 0x007F)			//码点位数7
+		PUTC(c, u);
+	else if (u <= 0x07FF) {					//码点位数11=>5+6
+		PUTC(c, 0xC0 | ((u >> 6) & 0x1F));
+		PUTC(c, 0x80 | ( u       & 0x3F));
+	}
+	else if (u <= 0xFFFF) {					//码点位数16=>4+6+6
+		PUTC(c, 0xE0 | ((u >> 12) & 0x0F));
+		PUTC(c, 0x80 | ((u >> 6 ) & 0x3F));
+		PUTC(c, 0x80 | ( u        & 0x3F));
+	}
+	else {									//码点位数21=>3+6+6+6
+		PUTC(c, 0xF0 | ((u >> 18) & 0x07));
+		PUTC(c, 0x80 | ((u >> 12) & 0x3F));
+		PUTC(c, 0x80 | ((u >> 6 ) & 0x3F));
+		PUTC(c, 0x80 | ( u        & 0x3F));
+	}
 }
 
 #define STRING_ERROR(ret) do { c->top = head; return ret; } while(0)
 
 static int lept_parse_string(lept_context* c, lept_value* v) {
     size_t head = c->top, len;
-    unsigned u;
+    unsigned u, u2;
     const char* p;
     EXPECT(c, '\"');
     p = c->json;
@@ -129,6 +162,17 @@ static int lept_parse_string(lept_context* c, lept_value* v) {
                         if (!(p = lept_parse_hex4(p, &u)))
                             STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_HEX);
                         /* \TODO surrogate handling */
+						if (u >= 0xD800 && u <= 0xDBFF) { //高代理项
+							if (*p++ != '\\')
+								STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
+							if (*p++ != 'u')
+								STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
+							if (!(p = lept_parse_hex4(p, &u2)))
+								STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_HEX);
+							if (u2 < 0xDC00 || u2 > 0xDFFF)	//低代理项
+								STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
+							u = (((u - 0xD800) << 10) | (u2 - 0xDC00)) + 0x10000;
+						}
                         lept_encode_utf8(c, u);
                         break;
                     default:

@@ -16,7 +16,7 @@
 
 typedef struct {
     const char* json;
-    char* stack;
+    char* stack ;
     size_t size, top;
 }lept_context;
 
@@ -89,20 +89,40 @@ static int lept_parse_number(lept_context* c, lept_value* v) {
 static int lept_parse_string(lept_context* c, lept_value* v) {
     size_t head = c->top, len;
     const char* p;
-    EXPECT(c, '\"');
+    EXPECT(c, '\"');	//左引号
     p = c->json;
     for (;;) {
         char ch = *p++;
         switch (ch) {
-            case '\"':
+            case '\"':	//parse至右引号结束
                 len = c->top - head;
-                lept_set_string(v, (const char*)lept_context_pop(c, len), len);
+                lept_set_string(v, (const char*)lept_context_pop(c, len), len);	//获取当前的string，并将这段string出栈
                 c->json = p;
                 return LEPT_PARSE_OK;
-            case '\0':
+			case '\\':
+				switch (*p++)
+				{
+				case '"':	PUTC(c, '\"'); break;
+				case '\\':	PUTC(c, '\\'); break;
+				case '/':	PUTC(c, '/'); break;
+				case 'b':	PUTC(c, '\b'); break;
+				case 'f':	PUTC(c, '\f'); break;
+				case 'r':	PUTC(c, '\r'); break;
+				case 'n':	PUTC(c, '\n'); break;
+				case 't':	PUTC(c, '\t'); break;
+				default:
+					c->top = head;
+					return LEPT_PARSE_INVALID_STRING_ESCAPE;
+				}
+            case '\0':	//未parse至右引号就结束
                 c->top = head;
                 return LEPT_PARSE_MISS_QUOTATION_MARK;
-            default:
+            default:	//非结束符号，ch入栈
+				if((unsigned char)ch < 0x20)
+				{
+					c->top = head;
+					return LEPT_PARSE_INVALID_STRING_CHAR;
+				}
                 PUTC(c, ch);
         }
     }
@@ -113,9 +133,9 @@ static int lept_parse_value(lept_context* c, lept_value* v) {
         case 't':  return lept_parse_literal(c, v, "true", LEPT_TRUE);
         case 'f':  return lept_parse_literal(c, v, "false", LEPT_FALSE);
         case 'n':  return lept_parse_literal(c, v, "null", LEPT_NULL);
-        default:   return lept_parse_number(c, v);
         case '"':  return lept_parse_string(c, v);
         case '\0': return LEPT_PARSE_EXPECT_VALUE;
+		default:   return lept_parse_number(c, v);
     }
 }
 
@@ -154,11 +174,14 @@ lept_type lept_get_type(const lept_value* v) {
 
 int lept_get_boolean(const lept_value* v) {
     /* \TODO */
-    return 0;
+	assert(v != NULL && (v->type == LEPT_FALSE || v->type == LEPT_TRUE));
+	return v->type == LEPT_TRUE;
 }
 
 void lept_set_boolean(lept_value* v, int b) {
-    /* \TODO */
+	/* \TODO */
+	lept_free(v);
+	v->type = b != 0 ? LEPT_TRUE : LEPT_FALSE;
 }
 
 double lept_get_number(const lept_value* v) {
@@ -168,6 +191,9 @@ double lept_get_number(const lept_value* v) {
 
 void lept_set_number(lept_value* v, double n) {
     /* \TODO */
+	lept_free(v);
+	v->type = LEPT_NUMBER;
+	v->u.n = n;
 }
 
 const char* lept_get_string(const lept_value* v) {
