@@ -1,4 +1,4 @@
-#ifdef _WINDOWS
+#ifdef _DEBUG
 #define _CRTDBG_MAP_ALLOC
 #include <crtdbg.h>
 #endif
@@ -480,7 +480,7 @@ static void test_access() {
 }
 
 int main() {
-#ifdef _WINDOWS
+#ifdef _DEBUG
     _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
 #endif
     test_parse();
