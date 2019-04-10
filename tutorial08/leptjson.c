@@ -423,9 +423,27 @@ void lept_copy(lept_value* dst, const lept_value* src) {
             break;
         case LEPT_ARRAY:
             /* \todo */
+			dst->u.a.e = malloc(src->u.a.size * sizeof(lept_value));
+			dst->u.a.size = src->u.a.size;
+			dst->u.a.capacity = src->u.a.capacity;
+			dst->type = LEPT_ARRAY;
+			for(size_t i = 0;i < src->u.a.size;i++)
+				lept_copy(&dst->u.a.e[i], &src->u.a.e[i]);
             break;
         case LEPT_OBJECT:
             /* \todo */
+			dst->u.o.m = malloc(src->u.o.size * sizeof(lept_member));
+			dst->u.o.size = src->u.o.size;
+			dst->u.o.capacity = src->u.o.capacity;
+			dst->type = LEPT_OBJECT;
+			for (size_t i = 0; i < src->u.o.size; i++)
+			{
+				dst->u.o.m[i].k = malloc((src->u.o.m[i].klen + 1) * sizeof(char));
+				memcpy(dst->u.o.m[i].k, src->u.o.m[i].k, src->u.o.m[i].klen);
+				dst->u.o.m[i].k[src->u.o.m[i].klen] = '\0';
+				dst->u.o.m[i].klen = src->u.o.m[i].klen;
+				lept_copy(&dst->u.o.m[i].v, &src->u.o.m[i].v);
+			}
             break;
         default:
             lept_free(dst);
@@ -500,6 +518,21 @@ int lept_is_equal(const lept_value* lhs, const lept_value* rhs) {
             return 1;
         case LEPT_OBJECT:
             /* \todo */
+			if (lhs->u.o.size != rhs->u.o.size)
+				return 0;
+			for (i = 0; i < lhs->u.o.size; i++)
+			{
+				int ret = 0;
+				for(size_t j = 0; j < rhs->u.o.size;j++)
+				{
+					if (lhs->u.o.m[i].klen == rhs->u.o.m[j].klen
+						&& memcmp(lhs->u.o.m[i].k, rhs->u.o.m[j].k, lhs->u.o.m[i].klen) == 0
+						&& lept_is_equal(&lhs->u.o.m[i].v, &rhs->u.o.m[j].v))
+						ret = 1;
+				}
+				if (ret == 0)
+					return 0;
+			}
             return 1;
         default:
             return 1;
@@ -609,12 +642,21 @@ void lept_popback_array_element(lept_value* v) {
 lept_value* lept_insert_array_element(lept_value* v, size_t index) {
     assert(v != NULL && v->type == LEPT_ARRAY && index <= v->u.a.size);
     /* \todo */
-    return NULL;
+	if (v->u.a.size == v->u.a.capacity)		//添加元素有可能需要扩容
+		lept_reserve_array(v, v->u.a.capacity == 0 ? 1 : v->u.a.capacity * 2);
+	memcpy(&v->u.a.e[index + 1], &v->u.a.e[index], (v->u.a.size - index) * sizeof(lept_value));
+	v->u.a.size++;
+    return &v->u.a.e[index];
 }
 
 void lept_erase_array_element(lept_value* v, size_t index, size_t count) {
     assert(v != NULL && v->type == LEPT_ARRAY && index + count <= v->u.a.size);
-    /* \todo */
+	/* \todo */
+	for (size_t i = index; i < index + count; i++)	//释放需要移除的元素
+		lept_free(&v->u.a.e[i]);
+	//然后将移除元素后的所有元素前移
+	memcpy(&v->u.a.e[index], &v->u.a.e[index + count], (v->u.a.size - index - count) * sizeof(lept_value));	
+	v->u.a.size -= count;
 }
 
 void lept_set_object(lept_value* v, size_t capacity) {
@@ -634,22 +676,36 @@ size_t lept_get_object_size(const lept_value* v) {
 size_t lept_get_object_capacity(const lept_value* v) {
     assert(v != NULL && v->type == LEPT_OBJECT);
     /* \todo */
-    return 0;
+    return v->u.o.capacity;
 }
 
 void lept_reserve_object(lept_value* v, size_t capacity) {
     assert(v != NULL && v->type == LEPT_OBJECT);
     /* \todo */
+	if (v->u.o.capacity < capacity) {
+		v->u.o.capacity = capacity;
+		v->u.o.m = (lept_member*)realloc(v->u.o.m, v->u.o.capacity * sizeof(lept_member));
+	}
 }
 
 void lept_shrink_object(lept_value* v) {
     assert(v != NULL && v->type == LEPT_OBJECT);
     /* \todo */
+	if (v->u.o.capacity > v->u.o.size) {
+		v->u.o.capacity = v->u.o.size;
+		v->u.o.m = (lept_member*)realloc(v->u.o.m, v->u.o.capacity * sizeof(lept_member));
+	}
 }
 
 void lept_clear_object(lept_value* v) {
     assert(v != NULL && v->type == LEPT_OBJECT);
     /* \todo */
+	for(size_t i = 0;i < lept_get_object_size(v);i++)
+	{
+		free(v->u.o.m[i].k);
+		lept_free(&v->u.o.m[i].v);
+	}
+	v->u.o.size = 0;
 }
 
 const char* lept_get_object_key(const lept_value* v, size_t index) {
@@ -687,10 +743,33 @@ lept_value* lept_find_object_value(lept_value* v, const char* key, size_t klen) 
 lept_value* lept_set_object_value(lept_value* v, const char* key, size_t klen) {
     assert(v != NULL && v->type == LEPT_OBJECT && key != NULL);
     /* \todo */
-    return NULL;
+	lept_value* ret = lept_find_object_value(v, key, klen);
+	if(ret == NULL)
+	{
+		if (v->u.o.size == v->u.o.capacity)
+		{
+			lept_reserve_object(v, ((v->u.o.capacity == 0) ? 1 : (v->u.o.capacity * 2)));
+		}
+		v->u.o.m[v->u.o.size].k = malloc((klen + 1) * sizeof(char));
+		memcpy(v->u.o.m[v->u.o.size].k, key, klen);
+		v->u.o.m[v->u.o.size].k[klen] = '\0';
+		v->u.o.m[v->u.o.size].klen = klen;
+		ret = &v->u.o.m[v->u.o.size].v;
+		v->u.o.size++;
+	}
+	
+	return ret;
 }
 
 void lept_remove_object_value(lept_value* v, size_t index) {
     assert(v != NULL && v->type == LEPT_OBJECT && index < v->u.o.size);
     /* \todo */
+
+	//释放要移除的元素
+	free(v->u.o.m[index].k);
+	lept_free(&v->u.o.m[index].v);
+
+	//然后将移除元素后的所有元素前移
+	memcpy(&v->u.o.m[index], &v->u.o.m[index + 1], (v->u.o.size - index - 1) * sizeof(lept_member));
+	v->u.o.size--;
 }
